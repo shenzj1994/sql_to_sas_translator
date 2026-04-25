@@ -116,17 +116,22 @@ def convert_comment_to_sas(kind: str, text: str) -> str:
 # ── statement formatting ───────────────────────────────────────────────────────
 
 def normalize_whitespace(stmt: str) -> str:
+    """Normalize whitespace in a statement."""
     stmt = re.sub(r"\n{3,}", "\n\n", stmt)
     lines = [line.rstrip() for line in stmt.splitlines()]
     return "\n".join(lines).strip()
 
 
 def indent(text: str, spaces: int = 4) -> str:
+    """Indent text by the specified number of spaces."""
     pad = " " * spaces
-    return "\n".join(pad + line if line.strip() else line for line in text.splitlines())
+    return "\n".join(
+        pad + line if line.strip() else line for line in text.splitlines()
+    )
 
 
 def wrap_as_execute(stmt: str, conn: str) -> str:
+    """Wrap a SQL statement as a SAS execute block."""
     body = indent(normalize_whitespace(stmt))
     return f"    execute (\n{body}\n    ) by {conn};"
 
@@ -141,7 +146,12 @@ def wrap_as_sas_comment(stmt: str) -> str:
 def wrap_select_as_dataset(stmt: str, dataset_name: str, conn: str) -> str:
     """Wrap a SELECT statement to create a dataset using pass-through syntax."""
     body = normalize_whitespace(stmt)
-    return f"    create table {dataset_name} as \n        select * \n        from connection to {conn} \n        ({body});"
+    return (
+        f"    create table {dataset_name} as\n"
+        f"        select *\n"
+        f"            from connection to {conn}\n"
+        f"                ({body});"
+    )
 
 
 # ── SAS block assembly ─────────────────────────────────────────────────────────
@@ -191,11 +201,68 @@ def build_sas_block(
     )
 
 
+# ── connection string builder ──────────────────────────────────────────────────
+
+def build_connection_string(
+    conn_name: str, conn_dbtype: str, conn_dsn: str,
+    conn_authdomain: str, conn_type: str
+) -> str:
+    """Build a SAS connection string from parameters."""
+    conn_parts = [conn_dbtype, "as", conn_name]
+    conn_opts = []
+
+    if conn_dsn:
+        conn_opts.append(f"dsn='{conn_dsn}'")
+    if conn_authdomain:
+        conn_opts.append(f"authdomain='{conn_authdomain}'")
+    if conn_type:
+        conn_opts.append(f"connection={conn_type}")
+
+    if conn_opts:
+        return f"connect to {' '.join(conn_parts)} ({' '.join(conn_opts)});"
+    return f"connect to {' '.join(conn_parts)};"
+
+
+def process_select_statement(
+    stmt_index: int, text: str, select_mode: str, select_counter: int
+) -> tuple[int, list[str], tuple[str, str] | None]:
+    """Process a SELECT statement based on the mode."""
+    preview = " ".join(text.split()[:12])
+    if len(text.split()) > 12:
+        preview += " …"
+
+    warnings = []
+    token = None
+
+    if select_mode == "ignore":
+        warnings.append(
+            f"Statement #{stmt_index} is a SELECT and will be ignored: {preview}"
+        )
+    elif select_mode == "dataset":
+        select_counter += 1
+        dataset_name = f"select_{select_counter}"
+        warnings.append(
+            f"Statement #{stmt_index} is a SELECT and will create "
+            f"dataset '{dataset_name}': {preview}"
+        )
+        token = (f"select_dataset_{dataset_name}", text)
+    else:  # comment mode (default)
+        warnings.append(
+            f"Statement #{stmt_index} is a SELECT and will be commented out "
+            f"(not executable via pass-through): {preview}"
+        )
+        token = ("select_comment", text)
+
+    return select_counter, warnings, token
+
+
 # ── public API ─────────────────────────────────────────────────────────────────
 
-def translate(sql: str, conn_name: str = "myconn", conn_dbtype: str = "oracle",
-              conn_dsn: str = "", conn_authdomain: str = "", conn_type: str = "global",
-              select_mode: str = "comment") -> dict:
+def translate(
+    sql: str, conn_name: str = "myconn", conn_dbtype: str = "oracle",
+    conn_dsn: str = "", conn_authdomain: str = "", conn_type: str = "global",
+    select_mode: str = "comment"
+) -> dict:
     """
     Translate a SQL string into a SAS PROC SQL pass-through block.
 
@@ -222,24 +289,11 @@ def translate(sql: str, conn_name: str = "myconn", conn_dbtype: str = "oracle",
     - "comment": preserved as SAS comments
     - "dataset": executed and create datasets (SELECT_1, SELECT_2, etc.)
     """
-    # Build the connection string based on provided parameters
-    conn_parts = [conn_dbtype, "as", conn_name]
-    conn_opts = []
-    
-    if conn_dsn:
-        conn_opts.append(f"dsn='{conn_dsn}'")
-    if conn_authdomain:
-        conn_opts.append(f"authdomain='{conn_authdomain}'")
-    if conn_type:
-        conn_opts.append(f"connection={conn_type}")
-    
-    if conn_opts:
-        conn_string = f"connect to {' '.join(conn_parts)} ({' '.join(conn_opts)});"
-    else:
-        conn_string = f"connect to {' '.join(conn_parts)};"
-    
-    tokens = tokenize(sql)
+    conn_string = build_connection_string(
+        conn_name, conn_dbtype, conn_dsn, conn_authdomain, conn_type
+    )
 
+    tokens = tokenize(sql)
     filtered_tokens: list[tuple[str, str]] = []
     warnings: list[str] = []
     total = 0
@@ -259,38 +313,28 @@ def translate(sql: str, conn_name: str = "myconn", conn_dbtype: str = "oracle",
 
         if first_word == "SELECT":
             selected += 1
-            preview = " ".join(text.split()[:12])
-            if len(text.split()) > 12:
-                preview += " …"
-            
+            select_counter, stmt_warnings, token = process_select_statement(
+                stmt_index, text, select_mode, select_counter
+            )
+            warnings.extend(stmt_warnings)
             if select_mode == "ignore":
                 skipped += 1
-                warnings.append(
-                    f"Statement #{stmt_index} is a SELECT and will be ignored: {preview}"
-                )
-            elif select_mode == "dataset":
-                select_counter += 1
-                dataset_name = f"select_{select_counter}"
-                warnings.append(
-                    f"Statement #{stmt_index} is a SELECT and will create dataset '{dataset_name}': {preview}"
-                )
-                filtered_tokens.append((f"select_dataset_{dataset_name}", text))
-            else:  # comment mode (default)
-                skipped += 1
-                warnings.append(
-                    f"Statement #{stmt_index} is a SELECT and will be commented out "
-                    f"(not executable via pass-through): {preview}"
-                )
-                filtered_tokens.append(("select_comment", text))
+            elif token:
+                filtered_tokens.append(token)
         else:
             filtered_tokens.append((kind, text))
 
     wrapped = total - (skipped if select_mode != "dataset" else 0)
-
-    sas = build_sas_block(filtered_tokens, conn_name=conn_name, conn_string=conn_string, wrapped_count=wrapped)
+    sas = build_sas_block(
+        filtered_tokens, conn_name=conn_name, conn_string=conn_string,
+        wrapped_count=wrapped
+    )
 
     return {
         "sas": sas,
         "warnings": warnings,
-        "counts": {"total": total, "wrapped": wrapped, "skipped": skipped, "selected": selected},
+        "counts": {
+            "total": total, "wrapped": wrapped, "skipped": skipped,
+            "selected": selected
+        },
     }
