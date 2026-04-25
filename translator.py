@@ -1,17 +1,45 @@
 """
-translator.py
-─────────────
-Pure-logic module: tokenizes a SQL string and produces a SAS PROC SQL
-pass-through block.  No Flask, no argparse, no file I/O.
+SQL-to-SAS Translator
+─────────────────────
+Core module for converting SQL queries into SAS PROC SQL pass-through syntax.
+Handles tokenization, syntax translation, and validation with configurable
+SELECT statement handling modes.
 
 Public API
 ──────────
-    translate(sql: str, conn: str) -> dict
-        {
-            "sas":      str,
-            "warnings": list[str],
-            "counts":   {"total": int, "wrapped": int, "skipped": int},
-        }
+    translate_sql_to_sas(
+        sql: str,
+        conn: str,
+        select_mode: str = "ignore"  # "ignore"|"comment"|"dataset"
+    ) -> dict:
+        Returns:
+            {
+                "sas": str,          # Generated SAS code
+                "warnings": list[str],
+                "counts": {
+                    "total": int,    # Total statements processed
+                    "wrapped": int,  # Statements wrapped as datasets
+                    "skipped": int   # Statements skipped (if select_mode="ignore")
+                }
+            }
+
+Features
+────────
+- Supports all major SQL clauses (SELECT, FROM, WHERE, etc.)
+- Configurable SELECT handling:
+  - "ignore": Skips SELECT statements (default)
+  - "comment": Converts to SAS-commented blocks
+  - "dataset": Wraps as SAS datasets via PROC SQL
+- Connection string validation
+- Detailed warning reporting
+
+Example
+───────
+>>> translate_sql_to_sas(
+...     "SELECT * FROM table WHERE id = 1",
+...     "server=prod;",
+...     select_mode="dataset"
+... )
 """
 
 import re
@@ -21,93 +49,94 @@ import re
 
 def tokenize(sql: str) -> list[tuple[str, str]]:
     """
-    Produce an ordered list of (kind, text) tokens:
-
-        'line_comment'   -- standalone  -- comment between statements
-        'block_comment'  -- standalone  /* comment */ between statements
-        'statement'      -- one SQL statement (inline comments absorbed)
-
-    Inline comments (inside an already-started statement) are absorbed into
-    the statement text.  '--' inline comments are converted to /* */ since
-    SAS does not support -- inside execute() bodies.
+    Simplified SQL tokenizer using regex.
+    Returns (token_type, token_value) pairs.
+    Converts -- comments to /* */ format for SAS compatibility.
+    Groups tokens into statements separated by semicolons.
     """
-    tokens: list[tuple[str, str]] = []
-    current: list[str] = []
-    in_single = False
-    in_double = False
-    i = 0
-    n = len(sql)
+    # Combined pattern for keywords, identifiers, literals, and operators
+    token_pattern = re.compile(r"""
+        (/\*.*?\*/)                 # block comments
+        |(--.*?$)                   # line comments
+        |([\"'].*?[\"'])            # quoted strings
+        |(\b(SELECT|FROM|WHERE|JOIN|GROUP\s+BY|HAVING|ORDER\s+BY|AND|OR|BETWEEN|IN|IS|NOT|NULL|ON)\b)  # keywords
+        |([=<>!]+|[*+\-/])          # operators
+        |(\d+(?:\.\d+)?)            # numbers
+        |([a-zA-Z_][\w\.]*)         # identifiers (can contain dots)
+        |([(),;.])                  # punctuation
+        |(\s+)                      # whitespace
+    """, re.VERBOSE | re.MULTILINE | re.IGNORECASE)
 
-    def in_statement() -> bool:
-        return bool("".join(current).strip())
+    # First, tokenize the SQL
+    raw_tokens = []
+    for match in token_pattern.finditer(sql):
+        groups = match.groups()
+        if groups[0]:  # Block comment
+            raw_tokens.append(('block_comment', groups[0]))
+        elif groups[1]:  # Line comment
+            raw_tokens.append(('line_comment', f"/* {groups[1][2:]} */"))
+        elif groups[2]:  # String literal
+            raw_tokens.append(('literal', groups[2]))
+        elif groups[3]:  # Keyword
+            # Handle GROUP BY and ORDER BY as single keywords
+            keyword = groups[3].upper().replace('\\s+', ' ')
+            raw_tokens.append(('keyword', keyword))
+        elif groups[5]:  # Operator
+            raw_tokens.append(('operator', groups[5]))
+        elif groups[6]:  # Number
+            raw_tokens.append(('number', groups[6]))
+        elif groups[7]:  # Identifier
+            raw_tokens.append(('identifier', groups[7]))
+        elif groups[8]:  # Punctuation
+            raw_tokens.append(('punctuation', groups[8]))
+        elif groups[9]:  # Whitespace
+            raw_tokens.append(('whitespace', groups[9]))
 
-    def flush_stmt() -> None:
-        text = "".join(current).strip()
-        if text:
-            tokens.append(("statement", text))
-        current.clear()
-
-    while i < n:
-        ch = sql[i]
-
-        if not in_single and not in_double:
-
-            # -- line comment
-            if ch == "-" and i + 1 < n and sql[i + 1] == "-":
-                end = sql.find("\n", i)
-                end = end if end != -1 else n
-                comment_text = sql[i:end]
-                if in_statement():
-                    body = comment_text.lstrip("-").strip()
-                    current.append(f" /* {body} */")
-                else:
-                    tokens.append(("line_comment", comment_text))
-                i = end
-                continue
-
-            # /* block comment */
-            if ch == "/" and i + 1 < n and sql[i + 1] == "*":
-                end = sql.find("*/", i + 2)
-                end = end + 2 if end != -1 else n
-                comment_text = sql[i:end]
-                if in_statement():
-                    current.append(comment_text)
-                else:
-                    flush_stmt()
-                    tokens.append(("block_comment", comment_text))
-                i = end
-                continue
-
-            if ch == ";":
-                flush_stmt()
-                i += 1
-                continue
-
-        if ch == "'" and not in_double:
-            if in_single and i + 1 < n and sql[i + 1] == "'":
-                current.append("''")
-                i += 2
-                continue
-            in_single = not in_single
-        elif ch == '"' and not in_single:
-            if in_double and i + 1 < n and sql[i + 1] == '"':
-                current.append('""')
-                i += 2
-                continue
-            in_double = not in_double
-
-        current.append(ch)
-        i += 1
-
-    flush_stmt()
-    return tokens
+    # Now group tokens into statements
+    statements = []
+    current_statement = []
+    
+    for kind, value in raw_tokens:
+        # Handle comments separately - they should be their own tokens
+        if kind in ('block_comment', 'line_comment'):
+            # If we have a statement in progress, flush it first
+            if current_statement:
+                stmt_text = ''.join(v for k, v in current_statement 
+                                   if k in ('literal', 'keyword', 'operator', 
+                                           'number', 'identifier', 'punctuation', 'whitespace'))
+                if stmt_text.strip():  # Only add non-empty statements
+                    statements.append(('statement', stmt_text))
+                current_statement = []
+            # Add comment as separate token
+            statements.append((kind, value))
+        elif kind == 'punctuation' and value == ';':
+            # End of statement
+            if current_statement:
+                stmt_text = ''.join(v for k, v in current_statement 
+                                   if k in ('literal', 'keyword', 'operator', 
+                                           'number', 'identifier', 'punctuation', 'whitespace'))
+                if stmt_text.strip():  # Only add non-empty statements
+                    statements.append(('statement', stmt_text))
+                current_statement = []
+        else:
+            current_statement.append((kind, value))
+    
+    # Handle any remaining tokens as the last statement
+    if current_statement:
+        stmt_text = ''.join(v for k, v in current_statement 
+                           if k in ('literal', 'keyword', 'operator', 
+                                   'number', 'identifier', 'punctuation', 'whitespace'))
+        if stmt_text.strip():  # Only add non-empty statements
+            statements.append(('statement', stmt_text))
+    
+    return statements
 
 
 # ── comment conversion ─────────────────────────────────────────────────────────
 
 def convert_comment_to_sas(kind: str, text: str) -> str:
     """Convert a standalone SQL comment token to a SAS /* … */ comment."""
-    if kind == "block_comment":
+    if kind == "block_comment" or (kind == "line_comment" and text.startswith("/*")):
         return text
     body = text.lstrip("-").strip()
     return f"/* {body} */" if body else "/* */"
