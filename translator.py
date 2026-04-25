@@ -140,7 +140,8 @@ def wrap_as_sas_comment(stmt: str) -> str:
     """Render a SQL statement as a SAS block comment instead of executable code."""
     body = normalize_whitespace(stmt)
     body = body.replace("/*", "/ *").replace("*/", "* /")
-    return f"    /* {indent(body)}\n    */"
+    body = indent(body, spaces=8)
+    return f"    /*\n{body}\n    */"
 
 
 def wrap_select_as_dataset(stmt: str, dataset_name: str, conn: str) -> str:
