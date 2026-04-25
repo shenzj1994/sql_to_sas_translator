@@ -25,15 +25,22 @@ def do_translate():
     data = request.get_json(silent=True) or {}
 
     sql  = (data.get("sql")  or "").strip()
-    conn = (data.get("conn") or "").strip()
+    conn = data.get("conn") or {}
 
     if not sql:
         return jsonify({"error": "No SQL provided."}), 400
-    if not conn:
-        return jsonify({"error": "Connection name is required."}), 400
+    
+    if not isinstance(conn, dict):
+        return jsonify({"error": "Connection parameters must be an object."}), 400
+    
+    conn_name = (conn.get("name") or "").strip() or "myconn"
+    conn_dbtype = (conn.get("dbtype") or "").strip() or "oracle"
+    conn_dsn = (conn.get("dsn") or "").strip()
+    conn_authdomain = (conn.get("authdomain") or "").strip()
+    conn_type = (conn.get("conntype") or "").strip() or "global"
 
     try:
-        result = translate(sql, conn)
+        result = translate(sql, conn_name, conn_dbtype, conn_dsn, conn_authdomain, conn_type)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
