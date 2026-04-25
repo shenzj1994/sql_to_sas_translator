@@ -25,9 +25,11 @@ Writing this by hand for a long SQL script is tedious and error-prone. This tool
 
 ## Translation rules
 
-### SELECT statements are commented out
+### SELECT statement handling
 
-`PROC SQL` pass-through `execute()` cannot return result sets — only statements that perform an action (DDL, DML) are valid. Any statement whose first keyword is `SELECT` is preserved as a SAS comment, and a warning is shown in the UI.
+`PROC SQL` pass-through `execute()` cannot return result sets — only statements that perform an action (DDL, DML) are valid. The tool provides three modes for handling SELECT statements:
+
+**1. As comment (default)** — Any statement whose first keyword is `SELECT` is preserved as a SAS comment, and a warning is shown in the UI.
 
 ```sql
 -- This will be commented out with a warning:
@@ -38,6 +40,29 @@ INSERT INTO staging.ev_sessions SELECT ...;
 ```
 
 The SELECT appears in the generated SAS output as readable commented text, so SAS ignores it while a human reviewer can still see it. Note that `INSERT INTO ... SELECT ...` is wrapped normally — the filter applies only to statements that begin with `SELECT`, not to `SELECT` appearing inside another statement.
+
+**2. As dataset** — SELECT statements are executed and create datasets (named `select_1`, `select_2`, etc.) using SAS pass-through syntax:
+
+```sql
+SELECT empid, lastname, firstname, salary
+FROM employees
+WHERE salary > 75000;
+```
+
+becomes:
+
+```sas
+    create table select_1 as
+        select *
+            from connection to myconn
+                (
+                SELECT empid, lastname, firstname, salary
+                FROM employees
+                WHERE salary > 75000
+                );
+```
+
+**3. Ignore** — SELECT statements are completely omitted from the output.
 
 ### Comments are converted to SAS comments, not discarded
 
@@ -96,13 +121,35 @@ sql_to_sas_web/
 `translator.py` is intentionally kept framework-free. It exposes one public function:
 
 ```python
-translate(sql: str, conn: str) -> dict
+translate(
+    sql: str,
+    conn_name: str = "myconn",
+    conn_dbtype: str = "oracle",
+    conn_dsn: str = "",
+    conn_authdomain: str = "",
+    conn_type: str = "global",
+    select_mode: str = "comment"
+) -> dict
 # {
 #   "sas":      str,
 #   "warnings": list[str],
-#   "counts":   {"total": int, "wrapped": int, "skipped": int},
+#   "counts":   {
+#       "total": int,
+#       "wrapped": int,
+#       "skipped": int,
+#       "selected": int
+#   },
 # }
 ```
+
+Parameters:
+- `sql` — Raw SQL source text
+- `conn_name` — SAS connection/libname alias
+- `conn_dbtype` — Database type (oracle, postgres, etc.)
+- `conn_dsn` — Data source name
+- `conn_authdomain` — Authentication domain
+- `conn_type` — Connection type (global, local, etc.)
+- `select_mode` — How to handle SELECT statements: `"ignore"`, `"comment"`, or `"dataset"`
 
 This means it can be imported and tested independently of Flask, or reused in other contexts (e.g. a CLI wrapper).
 
@@ -115,7 +162,22 @@ python app.py
 
 Open [http://127.0.0.1:5000](http://127.0.0.1:5000).
 
-The `conn` field defaults to `conn` — change it to match your SAS libname or connection alias (e.g. `greenplum`, `mydb`).
+### Connection parameters
+
+The web UI provides customizable connection parameters:
+
+- **SELECT mode** — Choose how to handle SELECT statements: `as comment` (default), `as dataset`, or `ignore`
+- **alias** — SAS connection/libname alias (e.g., `myconn`, `greenplum`)
+- **dbtype** — Database type (e.g., `oracle`, `postgres`, `greenplum`)
+- **dsn** — Data source name (e.g., `ABC_DSN`)
+- **authdomain** — Authentication domain for credentials
+- **conntype** — Connection type (e.g., `global`, `local`)
+
+These parameters are used to build the SAS `connect to` statement. For example:
+
+```sas
+connect to oracle as myconn (dsn='ABC_DSN' authdomain='my_domain' connection=global);
+```
 
 **Keyboard shortcut:** `Ctrl+Enter` / `Cmd+Enter` in the SQL pane triggers translation.
 
