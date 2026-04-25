@@ -26,12 +26,16 @@ def do_translate():
 
     sql  = (data.get("sql")  or "").strip()
     conn = data.get("conn") or {}
+    select_mode = (data.get("select_mode") or "comment").strip().lower()
 
     if not sql:
         return jsonify({"error": "No SQL provided."}), 400
     
     if not isinstance(conn, dict):
         return jsonify({"error": "Connection parameters must be an object."}), 400
+    
+    if select_mode not in ("ignore", "comment", "dataset"):
+        return jsonify({"error": "select_mode must be 'ignore', 'comment', or 'dataset'."}), 400
     
     conn_name = (conn.get("name") or "").strip() or "myconn"
     conn_dbtype = (conn.get("dbtype") or "").strip() or "oracle"
@@ -40,7 +44,7 @@ def do_translate():
     conn_type = (conn.get("conntype") or "").strip() or "global"
 
     try:
-        result = translate(sql, conn_name, conn_dbtype, conn_dsn, conn_authdomain, conn_type)
+        result = translate(sql, conn_name, conn_dbtype, conn_dsn, conn_authdomain, conn_type, select_mode)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 

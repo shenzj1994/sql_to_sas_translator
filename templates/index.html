@@ -89,7 +89,8 @@
       white-space: nowrap;
     }
 
-    .conn-group input {
+    .conn-group input,
+    .conn-group select {
       font-family: var(--mono);
       font-size: 11px;
       background: var(--bg);
@@ -102,13 +103,24 @@
       transition: border-color 0.15s;
     }
 
-    .conn-group input:focus {
+    .conn-group input:focus,
+    .conn-group select:focus {
       border-color: var(--accent);
     }
 
     .conn-group input::placeholder {
       color: var(--text-dim);
       opacity: 0.6;
+    }
+
+    .conn-group select {
+      width: auto;
+      padding: 4px 6px;
+    }
+
+    .conn-group select option {
+      background: var(--surface);
+      color: var(--text);
     }
 
     #translate-btn {
@@ -302,7 +314,13 @@
     <h1>sql <span>→</span> sas passthrough</h1>
     <div class="spacer"></div>
     <div class="conn-group">
-      <label for="conn-name">alias</label>
+      <label for="select-mode">SELECT</label>
+      <select id="select-mode">
+        <option value="comment" selected>as comment</option>
+        <option value="dataset">as dataset</option>
+        <option value="ignore">ignore</option>
+      </select>
+      <label for="conn-name" style="margin-left: 12px;">alias</label>
       <input id="conn-name" type="text" value="myconn" spellcheck="false" autocomplete="off" placeholder="Connection alias" />
       <label for="conn-dbtype" style="margin-left: 12px;">dbtype</label>
       <input id="conn-dbtype" type="text" value="oracle" spellcheck="false" autocomplete="off" placeholder="e.g. oracle" />
@@ -349,6 +367,7 @@
 <script>
   const sqlInput    = document.getElementById('sql-input');
   const sasOutput   = document.getElementById('sas-output');
+  const selectMode  = document.getElementById('select-mode');
   const connName    = document.getElementById('conn-name');
   const connDbtype  = document.getElementById('conn-dbtype');
   const connDsn     = document.getElementById('conn-dsn');
@@ -412,6 +431,7 @@
 
   async function doTranslate() {
     const sql  = sqlInput.value.trim();
+    const mode = selectMode.value;
     const connParams = {
       name: connName.value.trim() || 'myconn',
       dbtype: connDbtype.value.trim() || 'oracle',
@@ -435,7 +455,7 @@
       const resp = await fetch('/translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sql, conn: connParams }),
+        body: JSON.stringify({ sql, conn: connParams, select_mode: mode }),
       });
 
       const data = await resp.json();
