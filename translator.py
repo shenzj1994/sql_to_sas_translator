@@ -145,12 +145,13 @@ def wrap_as_sas_comment(stmt: str) -> str:
 
 def wrap_select_as_dataset(stmt: str, dataset_name: str, conn: str) -> str:
     """Wrap a SELECT statement to create a dataset using pass-through syntax."""
-    body = normalize_whitespace(stmt)
+    body = indent(normalize_whitespace(stmt), spaces=20)
     return (
         f"    create table {dataset_name} as\n"
         f"        select *\n"
         f"            from connection to {conn}\n"
-        f"                ({body});"
+        f"                (\n{body}\n"
+        f"                );"
     )
 
 
