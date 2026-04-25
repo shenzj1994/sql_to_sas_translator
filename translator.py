@@ -12,8 +12,6 @@ Public API
             "warnings": list[str],
             "counts":   {"total": int, "wrapped": int, "skipped": int},
         }
-
-    Raises ValueError if no executable statements remain after filtering.
 """
 
 import re
@@ -133,6 +131,13 @@ def wrap_as_execute(stmt: str, conn: str) -> str:
     return f"    execute (\n{body}\n    ) by {conn};"
 
 
+def wrap_as_sas_comment(stmt: str) -> str:
+    """Render a SQL statement as a SAS block comment instead of executable code."""
+    body = normalize_whitespace(stmt)
+    body = body.replace("/*", "/ *").replace("*/", "* /")
+    return f"    /* {indent(body)}\n    */"
+
+
 # ── SAS block assembly ─────────────────────────────────────────────────────────
 
 def build_sas_block(
@@ -157,7 +162,10 @@ def build_sas_block(
             if pending_comments:
                 body_parts.append("\n".join(pending_comments))
                 pending_comments = []
-            body_parts.append(wrap_as_execute(text, conn))
+            if kind == "select_comment":
+                body_parts.append(wrap_as_sas_comment(text))
+            else:
+                body_parts.append(wrap_as_execute(text, conn))
 
     if pending_comments:
         body_parts.append("\n".join(pending_comments))
@@ -192,9 +200,7 @@ def translate(sql: str, conn: str) -> dict:
         "counts":   {"total": int, "wrapped": int, "skipped": int},
     }
 
-    Raises
-    ------
-    ValueError  if no executable statements remain after filtering SELECTs.
+    SELECT statements are preserved as SAS comments instead of executable code.
     """
     tokens = tokenize(sql)
 
@@ -219,18 +225,14 @@ def translate(sql: str, conn: str) -> dict:
             if len(text.split()) > 12:
                 preview += " …"
             warnings.append(
-                f"Statement #{stmt_index} is a SELECT and will be skipped "
+                f"Statement #{stmt_index} is a SELECT and will be commented out "
                 f"(not executable via pass-through): {preview}"
             )
+            filtered_tokens.append(("select_comment", text))
         else:
             filtered_tokens.append((kind, text))
 
     wrapped = total - skipped
-
-    if wrapped == 0:
-        raise ValueError(
-            "No executable statements found after filtering SELECT statements."
-        )
 
     sas = build_sas_block(filtered_tokens, conn=conn, wrapped_count=wrapped)
 

@@ -25,19 +25,19 @@ Writing this by hand for a long SQL script is tedious and error-prone. This tool
 
 ## Translation rules
 
-### SELECT statements are skipped
+### SELECT statements are commented out
 
-`PROC SQL` pass-through `execute()` cannot return result sets — only statements that perform an action (DDL, DML) are valid. Any statement whose first keyword is `SELECT` is silently dropped from the output, and a warning is shown in the UI.
+`PROC SQL` pass-through `execute()` cannot return result sets — only statements that perform an action (DDL, DML) are valid. Any statement whose first keyword is `SELECT` is preserved as a SAS comment, and a warning is shown in the UI.
 
 ```sql
--- This will be skipped with a warning:
+-- This will be commented out with a warning:
 SELECT COUNT(*) FROM staging.ev_sessions;
 
 -- This will be wrapped normally:
 INSERT INTO staging.ev_sessions SELECT ...;
 ```
 
-Note that `INSERT INTO ... SELECT ...` is kept — the filter applies only to statements that begin with `SELECT`, not to `SELECT` appearing inside another statement.
+The SELECT appears in the generated SAS output as readable commented text, so SAS ignores it while a human reviewer can still see it. Note that `INSERT INTO ... SELECT ...` is wrapped normally — the filter applies only to statements that begin with `SELECT`, not to `SELECT` appearing inside another statement.
 
 ### Comments are converted to SAS comments, not discarded
 
