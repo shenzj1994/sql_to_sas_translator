@@ -255,6 +255,31 @@
       margin-bottom: 6px;
     }
 
+    .footer-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .footer-label:hover {
+      opacity: 0.8;
+    }
+
+    .footer-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      transition: transform 0.2s;
+    }
+
+    .footer-toggle.collapsed {
+      transform: rotate(-90deg);
+    }
+
     .footer-label.warn  { color: var(--warn-text); }
     .footer-label.error { color: var(--error-text); }
 
@@ -263,6 +288,15 @@
       display: flex;
       flex-direction: column;
       gap: 4px;
+      max-height: 500px;
+      overflow: hidden;
+      transition: max-height 0.25s ease-out, opacity 0.25s ease-out;
+      opacity: 1;
+    }
+
+    .warning-list.collapsed {
+      max-height: 0;
+      opacity: 0;
     }
 
     .warning-list li {
@@ -391,11 +425,24 @@
   function showWarnings(warnings) {
     if (!warnings.length) return;
     footerInner.innerHTML = `
-      <div class="footer-label warn">⚠ warnings (${warnings.length})</div>
-      <ul class="warning-list">
+      <div class="footer-label warn" id="warnings-toggle">
+        <span class="footer-toggle">▼</span>
+        <span>⚠ warnings (${warnings.length})</span>
+      </div>
+      <ul class="warning-list" id="warnings-list">
         ${warnings.map(w => `<li>${escHtml(w)}</li>`).join('')}
       </ul>`;
     footer.classList.add('visible');
+    
+    // Add toggle functionality
+    const toggle = document.getElementById('warnings-toggle');
+    const list = document.getElementById('warnings-list');
+    const toggleIcon = toggle.querySelector('.footer-toggle');
+    
+    toggle.addEventListener('click', () => {
+      list.classList.toggle('collapsed');
+      toggleIcon.classList.toggle('collapsed');
+    });
   }
 
   function showError(msg) {
