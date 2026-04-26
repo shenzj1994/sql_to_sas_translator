@@ -11,6 +11,11 @@ Routes
 
 from flask import Flask, render_template, request, jsonify
 from translator import translate
+try:
+    import sqlparse  # optional import for server-side formatting/tokenization
+    HAS_SQLPARSE = True
+except Exception:
+    HAS_SQLPARSE = False
 
 app = Flask(__name__)
 
@@ -29,6 +34,7 @@ def do_translate():
     sql = (data.get("sql") or "").strip()
     conn = data.get("conn") or {}
     select_mode = (data.get("select_mode") or "comment").strip().lower()
+    format_toggle = (data.get("format") or "off").strip().lower()
 
     if not sql:
         return jsonify({"error": "No SQL provided."}), 400
@@ -51,10 +57,18 @@ def do_translate():
     try:
         result = translate(
             sql, conn_name, conn_dbtype, conn_dsn,
-            conn_authdomain, conn_type, select_mode
+            conn_authdomain, conn_type, select_mode,
+            use_sqlparse=(format_toggle == 'on' and HAS_SQLPARSE)
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+
+    # Attach a flag to indicate whether server-side formatting (sqlparse)
+    # was available and whether the user requested it.
+    result["formatting"] = {
+        "requested": format_toggle == "on",
+        "available": HAS_SQLPARSE,
+    }
 
     return jsonify(result)
 

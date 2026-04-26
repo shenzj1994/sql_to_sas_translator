@@ -53,13 +53,48 @@ import re
 
 # ── tokenizer ──────────────────────────────────────────────────────────────────
 
-def tokenize(sql: str) -> list[tuple[str, str]]:
+def tokenize(sql: str, use_sqlparse: bool = False) -> list[tuple[str, str]]:
     """
     Simplified SQL tokenizer using regex.
     Returns (token_type, token_value) pairs.
     Converts -- comments to /* */ format for SAS compatibility.
     Groups tokens into statements separated by semicolons.
     """
+
+    # Prefer sqlparse when requested and available to split and identify
+    # statements, otherwise fallback to the simple splitter below.
+    if use_sqlparse:
+        try:
+            import sqlparse
+            parts_out: list[tuple[str, str]] = []
+            for stmt in sqlparse.split(sql):
+                s = stmt if not stmt.endswith(';') else stmt[:-1]
+                if not s.strip():
+                    continue
+                # detect if statement is actually a comment-only piece
+                parsed = sqlparse.parse(s)
+                if parsed:
+                    p0 = parsed[0]
+                    # find first non-whitespace, non-comment token
+                    first = None
+                    for tok in p0.tokens:
+                        if tok.is_whitespace:
+                            continue
+                        if tok.ttype in (sqlparse.tokens.Comment,):
+                            # treat standalone comment as comment token
+                            # keep original text
+                            parts_out.append(('line_comment', tok.value))
+                            first = None
+                            break
+                        first = tok
+                        break
+                    if first is None:
+                        continue
+                    parts_out.append(('statement', s))
+            return parts_out
+        except Exception:
+            # fall through to fallback
+            pass
 
     # Simpler tokenizer: don't try to reformat SQL. Preserve original
     # statements and comments in order and return minimal token kinds.
@@ -294,7 +329,8 @@ def _strip_leading_blank_lines_before_select(text: str) -> str:
 def translate(
     sql: str, conn_name: str = "myconn", conn_dbtype: str = "oracle",
     conn_dsn: str = "", conn_authdomain: str = "", conn_type: str = "global",
-    select_mode: str = "comment"
+    select_mode: str = "comment",
+    use_sqlparse: bool = False
 ) -> dict:
     """
     Translate a SQL string into a SAS PROC SQL pass-through block.
@@ -326,7 +362,7 @@ def translate(
         conn_name, conn_dbtype, conn_dsn, conn_authdomain, conn_type
     )
 
-    tokens = tokenize(sql)
+    tokens = tokenize(sql, use_sqlparse=use_sqlparse)
     filtered_tokens: list[tuple[str, str]] = []
     warnings: list[str] = []
     total = 0
