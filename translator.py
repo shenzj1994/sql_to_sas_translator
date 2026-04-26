@@ -49,11 +49,12 @@ Example
 """
 
 import re
+import sqlparse
 
 
 # ── tokenizer ──────────────────────────────────────────────────────────────────
 
-def tokenize(sql: str, use_sqlparse: bool = True) -> list[tuple[str, str]]:
+def tokenize(sql: str) -> list[tuple[str, str]]:
     """
     Simplified SQL tokenizer using regex.
     Returns (token_type, token_value) pairs.
@@ -129,27 +130,6 @@ def _convert_inline_line_comments_to_sas(text: str) -> str:
         else:
             converted.append(line)
     return "\n".join(converted)
-
-
-def _split_comments_to_sas(text: str) -> str:
-    """Convert every SQL line comment in text to SAS comment syntax."""
-    return _convert_inline_line_comments_to_sas(text)
-
-
-def _split_sqlparse_segment(text: str) -> list[tuple[str, str]]:
-    """Split a sqlparse segment into comment + statement tokens.
-
-    This keeps standalone comments as comment tokens, but preserves inline
-    comments inside statements so they can be converted later before wrapping.
-    """
-    stripped = text.lstrip()
-    if not stripped:
-        return []
-    if stripped.startswith("--"):
-        return [('line_comment', stripped.splitlines()[0].strip())]
-    if stripped.startswith("/*") and stripped.endswith("*/"):
-        return [('block_comment', stripped)]
-    return [('statement', text)]
 
 
 # ── statement formatting ───────────────────────────────────────────────────────
@@ -290,40 +270,19 @@ def process_select_statement(
         )
         # Remove any leading empty lines before the SELECT to avoid
         # emitting multiple blank lines in the generated SAS.
-        text_stripped = _strip_leading_blank_lines_before_select(text)
-        if _is_standalone_select(text_stripped):
-            token = (f"select_dataset_{dataset_name}", text_stripped)
+        if _is_select_statement(text):
+            token = (f"select_dataset_{dataset_name}", text)
         else:
-            token = ("statement", text_stripped)
+            token = ("statement", text)
     else:  # comment mode (default)
         warnings.append(
             f"Statement #{stmt_index} is a SELECT and will be commented out "
             f"(not executable via pass-through): {preview}"
         )
-        text_stripped = _strip_leading_blank_lines_before_select(text)
-        token = ("select_comment", text_stripped)
+        token = ("select_comment", text)
 
     return select_counter, warnings, token
 
-
-def _strip_leading_blank_lines_before_select(text: str) -> str:
-    """If the first non-empty line of the statement is a SELECT, remove any
-    leading empty lines so the generated SAS does not include excessive gaps.
-    """
-    if not text:
-        return text
-    lines = text.splitlines()
-    # find first non-empty line index
-    first_non_empty = 0
-    for i, line in enumerate(lines):
-        if line.strip():
-            first_non_empty = i
-            break
-    # If that line starts with SELECT, drop all preceding blank lines
-    first_line = lines[first_non_empty] if lines else ""
-    if first_line.lstrip().upper().startswith("SELECT"):
-        return "\n".join(lines[first_non_empty:])
-    return text
 
 
 def _is_select_statement(text: str) -> bool:
@@ -335,88 +294,25 @@ def _is_select_statement(text: str) -> bool:
     stripped = text.lstrip()
     if not stripped:
         return False
-    upper = stripped.upper()
-    if upper.startswith("SELECT"):
-        return True
-    if not upper.startswith("WITH"):
+
+    parsed = sqlparse.parse(text)
+    if not parsed:
         return False
-    depth = 0
-    i = 0
-    while i < len(stripped):
-        ch = stripped[i]
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth = max(0, depth - 1)
-        elif depth == 0 and upper.startswith("SELECT", i):
+    for stmt in parsed:
+        if stmt.get_type() == "SELECT":
             return True
-        i += 1
+
     return False
-
-
-def _comment_only_prefix(text: str) -> tuple[list[tuple[str, str]], str]:
-    """Split leading full-line SQL comments from a chunk.
-
-    If a chunk starts with one or more '--' comment lines, return those as
-    comment tokens and the remaining SQL text.
-    """
-    tokens: list[tuple[str, str]] = []
-    remaining = text.lstrip()
-    while remaining.startswith("--"):
-        line_end = remaining.find("\n")
-        if line_end == -1:
-            tokens.append(("line_comment", remaining.strip()))
-            return tokens, ""
-        tokens.append(("line_comment", remaining[:line_end].strip()))
-        remaining = remaining[line_end + 1 :].lstrip()
-    return tokens, remaining
 
 
 def _comment_only_statement(text: str) -> bool:
     """Return True if a chunk is just a single line comment statement."""
-    stripped = text.lstrip()
-    return stripped.startswith("--") and "\n" not in stripped.strip("\n")
+    parsed = sqlparse.parse(text)
+    for stmt in parsed:
+        if stmt.get_type() == "COMMENT":
+            return True
+    return False
 
-
-def _is_plain_select(text: str) -> bool:
-    """Return True for a plain SELECT statement, not a CTE."""
-    stripped = text.lstrip()
-    if not stripped:
-        return False
-    upper = stripped.upper()
-    return upper.startswith("SELECT")
-
-
-def _split_leading_comments_and_statement(text: str) -> list[tuple[str, str]]:
-    """Split a chunk into leading comments plus the remaining statement.
-
-    Used in the fallback path to prevent comments from being glued to the next
-    statement when blank lines are present.
-    """
-    out: list[tuple[str, str]] = []
-    remaining = text.lstrip()
-    while remaining.startswith('--'):
-        line_end = remaining.find('\n')
-        if line_end == -1:
-            out.append(('line_comment', remaining.strip()))
-            return out
-        out.append(('line_comment', remaining[:line_end].strip()))
-        remaining = remaining[line_end + 1 :].lstrip('\n')
-    if remaining.strip():
-        out.append(('statement', remaining))
-    return out
-
-
-def _is_standalone_select(text: str) -> bool:
-    """Return True only for SELECT statements that are not CTEs.
-
-    Used to avoid turning CTEs into datasets while still allowing plain
-    SELECT statements to follow the select_mode setting.
-    """
-    stripped = text.lstrip()
-    if not stripped:
-        return False
-    return stripped.upper().startswith("SELECT")
 
 
 # ── public API ─────────────────────────────────────────────────────────────────
@@ -424,8 +320,7 @@ def _is_standalone_select(text: str) -> bool:
 def translate(
     sql: str, conn_name: str = "myconn", conn_dbtype: str = "oracle",
     conn_dsn: str = "", conn_authdomain: str = "", conn_type: str = "global",
-    select_mode: str = "comment",
-    use_sqlparse: bool = True
+    select_mode: str = "comment"
 ) -> dict:
     """
     Translate a SQL string into a SAS PROC SQL pass-through block.
@@ -457,7 +352,7 @@ def translate(
         conn_name, conn_dbtype, conn_dsn, conn_authdomain, conn_type
     )
 
-    tokens = tokenize(sql, use_sqlparse=use_sqlparse)
+    tokens = tokenize(sql)
     filtered_tokens: list[tuple[str, str]] = []
     warnings: list[str] = []
     total = 0
