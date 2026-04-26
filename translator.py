@@ -96,38 +96,52 @@ def tokenize(sql: str, use_sqlparse: bool = False) -> list[tuple[str, str]]:
             # fall through to fallback
             pass
 
-    # Simpler tokenizer: don't try to reformat SQL. Preserve original
-    # statements and comments in order and return minimal token kinds.
+    # Simpler tokenizer fallback: split by semicolons and treat leading
+    # line comments in each segment as separate comment tokens. This avoids
+    # the regex alternation edge-case where a comment and following
+    # statement could be captured together.
     parts = []
-    # Pattern matches block comments, line comments, or any chunk up to a semicolon
-    splitter = re.compile(r"(/\*.*?\*/|--.*?$|[^;]+;?)", re.DOTALL | re.MULTILINE)
-    for m in splitter.finditer(sql):
-        part = m.group(0)
-        if not part:
+    # First, handle block comments by extracting them and replacing with
+    # placeholders to avoid accidental merging. We'll keep them inline.
+    # Split on semicolons to get statement-like chunks.
+    segments = sql.split(';')
+    for seg in segments:
+        if not seg or not seg.strip():
             continue
-        part_stripped = part
-        if part_stripped.startswith('/*') and '*/' in part_stripped:
-            parts.append(('block_comment', part_stripped))
-        elif part_stripped.lstrip().startswith('--'):
-            # convert SQL line comment to a line_comment token; conversion to
-            # SAS-style is handled later by convert_comment_to_sas
-            parts.append(('line_comment', part_stripped.strip()))
-        else:
-            # It's a statement or statement fragment; strip a trailing semicolon
-            # and remove leading blank lines so single statements don't emit
-            # excessive empty space in generated SAS.
-            stmt = part_stripped
-            if stmt.endswith(';'):
-                stmt = stmt[:-1]
-            # Remove leading blank lines (lines that are empty or whitespace)
-            lines = stmt.splitlines()
+        # Process block comments that may span multiple lines inside the segment
+        # If a segment is solely a block comment, return it as such.
+        seg_stripped = seg
+        if seg_stripped.lstrip().startswith('/*') and '*/' in seg_stripped:
+            parts.append(('block_comment', seg_stripped.strip()))
+            continue
+
+        # Now handle line-oriented comments and statements within the segment
+        lines = seg_stripped.splitlines()
+        stmt_lines: list[str] = []
+        for line in lines:
+            if line.lstrip().startswith('--'):
+                # flush any accumulated statement lines first
+                if stmt_lines:
+                    stmt = "\n".join(stmt_lines).strip()
+                    if stmt:
+                        parts.append(('statement', stmt))
+                        stmt_lines = []
+                parts.append(('line_comment', line.strip()))
+            else:
+                stmt_lines.append(line)
+
+        # flush remaining statement lines for this segment
+        if stmt_lines:
+            stmt = "\n".join(stmt_lines)
+            # remove leading blank lines
+            s_lines = stmt.splitlines()
             first_non_empty = 0
-            for i, line in enumerate(lines):
-                if line.strip():
+            for i, l in enumerate(s_lines):
+                if l.strip():
                     first_non_empty = i
                     break
-            stmt = "\n".join(lines[first_non_empty:])
-            if stmt.strip():
+            stmt = "\n".join(s_lines[first_non_empty:]).strip()
+            if stmt:
                 parts.append(('statement', stmt))
 
     return parts
