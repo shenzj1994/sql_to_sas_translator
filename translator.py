@@ -6,7 +6,7 @@ to smaller modules: `tokenizer`, `comments`, `formatting`, `sas_block`,
 `connection`, and `select_processor`.
 """
 
-from tokenizer import tokenize, _comment_only_statement
+from tokenizer import tokenize
 from select_processor import process_select_statement, _is_select_statement
 from connection import build_connection_string
 from sas_block import build_sas_block
@@ -36,9 +36,6 @@ def translate(
     stmt_index = 0
 
     for kind, text in tokens:
-        if kind == "line_comment" and _comment_only_statement(text):
-            filtered_tokens.append((kind, text))
-            continue
         if kind != "statement":
             filtered_tokens.append((kind, text))
             continue

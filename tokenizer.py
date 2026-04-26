@@ -13,39 +13,31 @@ def tokenize(sql: str) -> list[tuple[str, str]]:
     """
 
     parts: list[tuple[str, str]] = []
-    current_statement: list[str] = []
-    for line in sql.splitlines():
-        if line.lstrip().startswith("--"):
-            comment_text = line.strip()
-            # Keep a leading comment as its own token, but do not split a
-            # statement that is already in progress if the comment is inline.
-            if current_statement:
-                current_statement.append(line)
-            else:
-                parts.append(("line_comment", comment_text))
+    # Parse the script into individual statements
+    parsed = sqlparse.parse(sql)
+    
+    for stmt in parsed:
+        # 1. Format the statement
+        formatted_sql = sqlparse.format(
+            str(stmt),
+            reindent=True,
+            # keyword_case='unchanged',
+            strip_comments=False
+        ).strip()
+        
+        # Skip empty strings (can happen with trailing semicolons)
+        if not formatted_sql:
+            continue
+            
+        # 2. Determine if it's a COMMENT or a STATEMENT
+        # sqlparse.Statement.get_type() returns 'SELECT', 'INSERT', etc.
+        # If it's just a comment, it usually returns 'UNKNOWN'
+        if stmt.get_type() in ['UNKNOWN','COMMENT']:
+            label = "line_comment"
         else:
-            current_statement.append(line)
-
-        # Flush on blank lines only when the current statement has content and
-        # the next non-empty line starts a new top-level statement.
-        if line.strip() == "" and current_statement:
-            stmt = "\n".join(current_statement).strip()
-            if stmt:
-                parts.append(("statement", stmt))
-            current_statement = []
-
-    if current_statement:
-        stmt = "\n".join(current_statement).strip()
-        if stmt:
-            parts.append(("statement", stmt))
+            label = "statement"
+            
+        parts.append((label, formatted_sql))
+        
 
     return parts
-
-
-def _comment_only_statement(text: str) -> bool:
-    """Return True if a chunk is just a single line comment statement."""
-    parsed = sqlparse.parse(text)
-    for stmt in parsed:
-        if stmt.get_type() == "COMMENT":
-            return True
-    return False
