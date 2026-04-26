@@ -53,7 +53,7 @@ import re
 
 # ── tokenizer ──────────────────────────────────────────────────────────────────
 
-def tokenize(sql: str, use_sqlparse: bool = False, use_sqlparse_formatter: bool = False) -> list[tuple[str, str]]:
+def tokenize(sql: str, use_sqlparse: bool = True) -> list[tuple[str, str]]:
     """
     Simplified SQL tokenizer using regex.
     Returns (token_type, token_value) pairs.
@@ -61,45 +61,22 @@ def tokenize(sql: str, use_sqlparse: bool = False, use_sqlparse_formatter: bool 
     Groups tokens into statements separated by semicolons.
     """
 
-    # Prefer sqlparse when requested and available to split and identify
-    # statements, otherwise fallback to the simple splitter below.
+    # Prefer sqlparse when available to split and identify statements.
     if use_sqlparse:
         try:
             import sqlparse
             parts_out: list[tuple[str, str]] = []
-            source = sql
-            if use_sqlparse_formatter:
-                # Experimental: use sqlparse's formatter, but only when explicitly enabled.
-                source = sqlparse.format(
-                    source,
-                    reindent=True,
-                    keyword_case='upper',
-                    strip_comments=False,
-                )
+            source = sqlparse.format(
+                sql,
+                reindent=True,
+                keyword_case='upper',
+                strip_comments=False,
+            )
             for stmt in sqlparse.split(source):
                 s = stmt if not stmt.endswith(';') else stmt[:-1]
                 if not s.strip():
                     continue
-                # detect if statement is actually a comment-only piece
-                parsed = sqlparse.parse(s)
-                if parsed:
-                    p0 = parsed[0]
-                    # find first non-whitespace, non-comment token
-                    first = None
-                    for tok in p0.tokens:
-                        if tok.is_whitespace:
-                            continue
-                        if tok.ttype in (sqlparse.tokens.Comment,):
-                            # treat standalone comment as comment token
-                            # keep original text
-                            parts_out.append(('line_comment', tok.value))
-                            first = None
-                            break
-                        first = tok
-                        break
-                    if first is None:
-                        continue
-                    parts_out.append(('statement', s))
+                parts_out.extend(_split_sqlparse_segment(s))
             return parts_out
         except Exception:
             # fall through to fallback
@@ -129,20 +106,17 @@ def tokenize(sql: str, use_sqlparse: bool = False, use_sqlparse_formatter: bool 
         stmt_lines: list[str] = []
         for line in lines:
             if line.lstrip().startswith('--'):
-                # flush any accumulated statement lines first
                 if stmt_lines:
                     stmt = "\n".join(stmt_lines).strip()
                     if stmt:
-                        parts.append(('statement', stmt))
-                        stmt_lines = []
+                        parts.extend(_split_leading_comments_and_statement(stmt))
+                    stmt_lines = []
                 parts.append(('line_comment', line.strip()))
             else:
                 stmt_lines.append(line)
 
-        # flush remaining statement lines for this segment
         if stmt_lines:
             stmt = "\n".join(stmt_lines)
-            # remove leading blank lines
             s_lines = stmt.splitlines()
             first_non_empty = 0
             for i, l in enumerate(s_lines):
@@ -151,7 +125,7 @@ def tokenize(sql: str, use_sqlparse: bool = False, use_sqlparse_formatter: bool 
                     break
             stmt = "\n".join(s_lines[first_non_empty:]).strip()
             if stmt:
-                parts.append(('statement', stmt))
+                parts.extend(_split_leading_comments_and_statement(stmt))
 
     return parts
 
@@ -160,20 +134,56 @@ def tokenize(sql: str, use_sqlparse: bool = False, use_sqlparse_formatter: bool 
 
 def convert_comment_to_sas(kind: str, text: str) -> str:
     """Convert a standalone SQL comment token to a SAS /* … */ comment."""
-    # Preserve block comments as-is
+    if kind == "line_comment":
+        s = text.strip()
+        body = s[2:].strip() if s.startswith("--") else s
+        return f"/* {body} */" if body else "/* */"
     if kind == "block_comment":
-        return text
+        s = text.strip()
+        return s if s.startswith("/*") and s.endswith("*/") else f"/* {s} */"
 
-    # Normalize line comments (e.g. -- comment) into SAS /* ... */
     s = text.strip()
-    if s.startswith('/*') and s.endswith('*/'):
+    if s.startswith("/*") and s.endswith("*/"):
         return s
-    if s.startswith('--'):
+    if s.startswith("--"):
         body = s[2:].strip()
-    else:
-        # Fallback: remove leading dashes or whitespace
-        body = s.lstrip('-').strip()
-    return f"/* {body} */" if body else "/* */"
+        return f"/* {body} */" if body else "/* */"
+    return f"/* {s} */" if s else "/* */"
+
+
+def _convert_inline_line_comments_to_sas(text: str) -> str:
+    """Convert any -- comments that appear inside a SQL statement to SAS.
+
+    This preserves the statement text while ensuring comment markers are SAS-safe.
+    """
+    lines = text.splitlines()
+    converted: list[str] = []
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("--"):
+            indent_len = len(line) - len(stripped)
+            indent = line[:indent_len]
+            body = stripped[2:].strip()
+            converted.append(f"{indent}/* {body} */" if body else f"{indent}/* */")
+        else:
+            converted.append(line)
+    return "\n".join(converted)
+
+
+def _split_sqlparse_segment(text: str) -> list[tuple[str, str]]:
+    """Split a sqlparse segment into comment + statement tokens.
+
+    This keeps standalone comments as comment tokens, but preserves inline
+    comments inside statements so they can be converted later before wrapping.
+    """
+    stripped = text.lstrip()
+    if not stripped:
+        return []
+    if stripped.startswith("--"):
+        return [('line_comment', stripped.splitlines()[0].strip())]
+    if stripped.startswith("/*") and stripped.endswith("*/"):
+        return [('block_comment', stripped)]
+    return [('statement', _strip_leading_blank_lines_before_select(text))]
 
 
 # ── statement formatting ───────────────────────────────────────────────────────
@@ -196,7 +206,7 @@ def indent(text: str, spaces: int = 4) -> str:
 def wrap_as_execute(stmt: str, conn: str) -> str:
     """Wrap a SQL statement as a SAS execute block."""
     # Do not attempt to reformat SQL; preserve statement as provided by user.
-    body = indent(stmt, spaces=8)
+    body = indent(_convert_inline_line_comments_to_sas(stmt), spaces=8)
     return f"    execute (\n{body}\n    ) by {conn};"
 
 
@@ -211,7 +221,7 @@ def wrap_as_sas_comment(stmt: str) -> str:
 def wrap_select_as_dataset(stmt: str, dataset_name: str, conn: str) -> str:
     """Wrap a SELECT statement to create a dataset using pass-through syntax."""
     # Preserve original SELECT text without reformatting
-    body = indent(stmt, spaces=16)
+    body = indent(_convert_inline_line_comments_to_sas(stmt), spaces=16)
     return (
         f"    create table {dataset_name} as\n"
         f"        select *\n"
@@ -347,14 +357,62 @@ def _strip_leading_blank_lines_before_select(text: str) -> str:
     return text
 
 
+def _is_select_statement(text: str) -> bool:
+    """Detect SELECT statements, including CTEs that begin with WITH.
+
+    Uses a light lexical check so common CTEs are treated as SELECT-like
+    statements instead of being wrapped as raw execute blocks.
+    """
+    stripped = text.lstrip()
+    if not stripped:
+        return False
+    upper = stripped.upper()
+    if upper.startswith("SELECT"):
+        return True
+    if not upper.startswith("WITH"):
+        return False
+    # Walk through balanced parentheses of CTEs, then look for SELECT.
+    depth = 0
+    i = 0
+    while i < len(stripped):
+        ch = stripped[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0 and upper[i:i+6] == "SELECT":
+            return True
+        i += 1
+    return False
+
+
+def _split_leading_comments_and_statement(text: str) -> list[tuple[str, str]]:
+    """Split a chunk into leading comments plus the remaining statement.
+
+    Used in the fallback path to prevent comments from being glued to the next
+    statement when blank lines are present.
+    """
+    out: list[tuple[str, str]] = []
+    remaining = text.lstrip()
+    while remaining.startswith('--'):
+        line_end = remaining.find('\n')
+        if line_end == -1:
+            out.append(('line_comment', remaining.strip()))
+            return out
+        out.append(('line_comment', remaining[:line_end].strip()))
+        remaining = remaining[line_end + 1 :].lstrip('\n')
+    if remaining.strip():
+        out.append(('statement', remaining))
+    return out
+
+
 # ── public API ─────────────────────────────────────────────────────────────────
 
 def translate(
     sql: str, conn_name: str = "myconn", conn_dbtype: str = "oracle",
     conn_dsn: str = "", conn_authdomain: str = "", conn_type: str = "global",
     select_mode: str = "comment",
-    use_sqlparse: bool = False,
-    use_sqlparse_formatter: bool = False
+    use_sqlparse: bool = True
 ) -> dict:
     """
     Translate a SQL string into a SAS PROC SQL pass-through block.
@@ -386,11 +444,7 @@ def translate(
         conn_name, conn_dbtype, conn_dsn, conn_authdomain, conn_type
     )
 
-    tokens = tokenize(
-        sql,
-        use_sqlparse=use_sqlparse,
-        use_sqlparse_formatter=use_sqlparse_formatter,
-    )
+    tokens = tokenize(sql, use_sqlparse=use_sqlparse)
     filtered_tokens: list[tuple[str, str]] = []
     warnings: list[str] = []
     total = 0
@@ -406,9 +460,7 @@ def translate(
 
         total += 1
         stmt_index += 1
-        first_word = text.split()[0].upper() if text.split() else ""
-
-        if first_word == "SELECT":
+        if _is_select_statement(text):
             selected += 1
             select_counter, stmt_warnings, token = process_select_statement(
                 stmt_index, text, select_mode, select_counter

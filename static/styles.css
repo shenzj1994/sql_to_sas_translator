@@ -1,4 +1,4 @@
-* , *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
   --bg:         #1a1b1e;
@@ -111,6 +111,20 @@ header h1 span {
 .conn-group select option {
   background: var(--surface);
   color: var(--text);
+}
+
+.conn-group input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+}
+
+.conn-group .experimental-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 #translate-btn {
