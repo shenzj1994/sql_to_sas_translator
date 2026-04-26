@@ -56,8 +56,7 @@ def do_translate():
     try:
         result = translate(
             sql, conn_name, conn_dbtype, conn_dsn,
-            conn_authdomain, conn_type, select_mode,
-            use_sqlparse=HAS_SQLPARSE,
+            conn_authdomain, conn_type, select_mode
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
