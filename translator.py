@@ -53,7 +53,7 @@ import re
 
 # ── tokenizer ──────────────────────────────────────────────────────────────────
 
-def tokenize(sql: str, use_sqlparse: bool = False) -> list[tuple[str, str]]:
+def tokenize(sql: str, use_sqlparse: bool = False, use_sqlparse_formatter: bool = False) -> list[tuple[str, str]]:
     """
     Simplified SQL tokenizer using regex.
     Returns (token_type, token_value) pairs.
@@ -67,7 +67,16 @@ def tokenize(sql: str, use_sqlparse: bool = False) -> list[tuple[str, str]]:
         try:
             import sqlparse
             parts_out: list[tuple[str, str]] = []
-            for stmt in sqlparse.split(sql):
+            source = sql
+            if use_sqlparse_formatter:
+                # Experimental: use sqlparse's formatter, but only when explicitly enabled.
+                source = sqlparse.format(
+                    source,
+                    reindent=True,
+                    keyword_case='upper',
+                    strip_comments=False,
+                )
+            for stmt in sqlparse.split(source):
                 s = stmt if not stmt.endswith(';') else stmt[:-1]
                 if not s.strip():
                     continue
@@ -344,7 +353,8 @@ def translate(
     sql: str, conn_name: str = "myconn", conn_dbtype: str = "oracle",
     conn_dsn: str = "", conn_authdomain: str = "", conn_type: str = "global",
     select_mode: str = "comment",
-    use_sqlparse: bool = False
+    use_sqlparse: bool = False,
+    use_sqlparse_formatter: bool = False
 ) -> dict:
     """
     Translate a SQL string into a SAS PROC SQL pass-through block.
@@ -376,7 +386,11 @@ def translate(
         conn_name, conn_dbtype, conn_dsn, conn_authdomain, conn_type
     )
 
-    tokens = tokenize(sql, use_sqlparse=use_sqlparse)
+    tokens = tokenize(
+        sql,
+        use_sqlparse=use_sqlparse,
+        use_sqlparse_formatter=use_sqlparse_formatter,
+    )
     filtered_tokens: list[tuple[str, str]] = []
     warnings: list[str] = []
     total = 0

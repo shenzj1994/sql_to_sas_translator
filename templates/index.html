@@ -23,11 +23,10 @@
         <option value="dataset">as dataset</option>
         <option value="ignore">ignore</option>
       </select>
-      <label for="format-toggle" style="margin-left: 12px;">Experimental</label>
-      <select id="format-toggle" title="Experimental SQL formatting">
-        <option value="off" selected>format off</option>
-        <option value="on">format on</option>
-      </select>
+      <label for="format-toggle" style="margin-left: 12px; display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: 0;">
+        <input id="format-toggle" type="checkbox" title="Experimental SQL formatting" />
+        <span>Experimental formatter</span>
+      </label>
       <label for="conn-name" style="margin-left: 12px;">alias</label>
       <input id="conn-name" type="text" value="myconn" spellcheck="false" autocomplete="off" placeholder="Connection alias" />
       <label for="conn-dbtype" style="margin-left: 12px;">dbtype</label>
@@ -76,6 +75,7 @@
   const sqlInput    = document.getElementById('sql-input');
   const sasOutput   = document.getElementById('sas-output');
   const selectMode  = document.getElementById('select-mode');
+  const formatToggle = document.getElementById('format-toggle');
   const connName    = document.getElementById('conn-name');
   const connDbtype  = document.getElementById('conn-dbtype');
   const connDsn     = document.getElementById('conn-dsn');
@@ -176,7 +176,13 @@
       const resp = await fetch('/translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sql, conn: connParams, select_mode: mode }),
+        body: JSON.stringify({
+          sql,
+          conn: connParams,
+          select_mode: mode,
+          use_sqlparse: true,
+          use_sqlparse_formatter: formatToggle.checked,
+        }),
       });
 
       const data = await resp.json();

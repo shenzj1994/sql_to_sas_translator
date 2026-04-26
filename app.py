@@ -34,7 +34,8 @@ def do_translate():
     sql = (data.get("sql") or "").strip()
     conn = data.get("conn") or {}
     select_mode = (data.get("select_mode") or "comment").strip().lower()
-    format_toggle = (data.get("format") or "off").strip().lower()
+    use_sqlparse = bool(data.get("use_sqlparse", False))
+    use_sqlparse_formatter = bool(data.get("use_sqlparse_formatter", False))
 
     if not sql:
         return jsonify({"error": "No SQL provided."}), 400
@@ -58,7 +59,8 @@ def do_translate():
         result = translate(
             sql, conn_name, conn_dbtype, conn_dsn,
             conn_authdomain, conn_type, select_mode,
-            use_sqlparse=(format_toggle == 'on' and HAS_SQLPARSE)
+            use_sqlparse=(use_sqlparse and HAS_SQLPARSE),
+            use_sqlparse_formatter=(use_sqlparse_formatter and HAS_SQLPARSE),
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -66,7 +68,8 @@ def do_translate():
     # Attach a flag to indicate whether server-side formatting (sqlparse)
     # was available and whether the user requested it.
     result["formatting"] = {
-        "requested": format_toggle == "on",
+        "requested": use_sqlparse,
+        "formatter_requested": use_sqlparse_formatter,
         "available": HAS_SQLPARSE,
     }
 
