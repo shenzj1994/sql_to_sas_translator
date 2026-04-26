@@ -61,71 +61,32 @@ def tokenize(sql: str, use_sqlparse: bool = True) -> list[tuple[str, str]]:
     Groups tokens into statements separated by semicolons.
     """
 
-    # Prefer sqlparse when available to split and identify statements.
-    if use_sqlparse:
-        try:
-            import sqlparse
-            parts_out: list[tuple[str, str]] = []
-            source = sqlparse.format(
-                sql,
-                reindent=True,
-                keyword_case='upper',
-                strip_comments=False,
-            )
-            for stmt in sqlparse.split(source):
-                s = stmt if not stmt.endswith(';') else stmt[:-1]
-                if not s.strip():
-                    continue
-                parts_out.extend(_split_sqlparse_segment(s))
-            return parts_out
-        except Exception:
-            # fall through to fallback
-            pass
-
-    # Simpler tokenizer fallback: split by semicolons and treat leading
-    # line comments in each segment as separate comment tokens. This avoids
-    # the regex alternation edge-case where a comment and following
-    # statement could be captured together.
-    parts = []
-    # First, handle block comments by extracting them and replacing with
-    # placeholders to avoid accidental merging. We'll keep them inline.
-    # Split on semicolons to get statement-like chunks.
-    segments = sql.split(';')
-    for seg in segments:
-        if not seg or not seg.strip():
-            continue
-        # Process block comments that may span multiple lines inside the segment
-        # If a segment is solely a block comment, return it as such.
-        seg_stripped = seg
-        if seg_stripped.lstrip().startswith('/*') and '*/' in seg_stripped:
-            parts.append(('block_comment', seg_stripped.strip()))
-            continue
-
-        # Now handle line-oriented comments and statements within the segment
-        lines = seg_stripped.splitlines()
-        stmt_lines: list[str] = []
-        for line in lines:
-            if line.lstrip().startswith('--'):
-                if stmt_lines:
-                    stmt = "\n".join(stmt_lines).strip()
-                    if stmt:
-                        parts.extend(_split_leading_comments_and_statement(stmt))
-                    stmt_lines = []
-                parts.append(('line_comment', line.strip()))
+    parts: list[tuple[str, str]] = []
+    current_statement: list[str] = []
+    for line in sql.splitlines():
+        if line.lstrip().startswith("--"):
+            comment_text = line.strip()
+            # Keep a leading comment as its own token, but do not split a
+            # statement that is already in progress if the comment is inline.
+            if current_statement:
+                current_statement.append(line)
             else:
-                stmt_lines.append(line)
+                parts.append(("line_comment", comment_text))
+        else:
+            current_statement.append(line)
 
-        if stmt_lines:
-            stmt = "\n".join(stmt_lines)
-            s_lines = stmt.splitlines()
-            first_non_empty = 0
-            for i, l in enumerate(s_lines):
-                if l.strip():
-                    first_non_empty = i
-                    break
-            stmt = "\n".join(s_lines[first_non_empty:]).strip()
+        # Flush on blank lines only when the current statement has content and
+        # the next non-empty line starts a new top-level statement.
+        if line.strip() == "" and current_statement:
+            stmt = "\n".join(current_statement).strip()
             if stmt:
-                parts.extend(_split_leading_comments_and_statement(stmt))
+                parts.append(("statement", stmt))
+            current_statement = []
+
+    if current_statement:
+        stmt = "\n".join(current_statement).strip()
+        if stmt:
+            parts.append(("statement", stmt))
 
     return parts
 
@@ -143,11 +104,11 @@ def convert_comment_to_sas(kind: str, text: str) -> str:
         return s if s.startswith("/*") and s.endswith("*/") else f"/* {s} */"
 
     s = text.strip()
-    if s.startswith("/*") and s.endswith("*/"):
-        return s
     if s.startswith("--"):
         body = s[2:].strip()
         return f"/* {body} */" if body else "/* */"
+    if s.startswith("/*") and s.endswith("*/"):
+        return s
     return f"/* {s} */" if s else "/* */"
 
 
@@ -170,6 +131,11 @@ def _convert_inline_line_comments_to_sas(text: str) -> str:
     return "\n".join(converted)
 
 
+def _split_comments_to_sas(text: str) -> str:
+    """Convert every SQL line comment in text to SAS comment syntax."""
+    return _convert_inline_line_comments_to_sas(text)
+
+
 def _split_sqlparse_segment(text: str) -> list[tuple[str, str]]:
     """Split a sqlparse segment into comment + statement tokens.
 
@@ -183,7 +149,7 @@ def _split_sqlparse_segment(text: str) -> list[tuple[str, str]]:
         return [('line_comment', stripped.splitlines()[0].strip())]
     if stripped.startswith("/*") and stripped.endswith("*/"):
         return [('block_comment', stripped)]
-    return [('statement', _strip_leading_blank_lines_before_select(text))]
+    return [('statement', text)]
 
 
 # ── statement formatting ───────────────────────────────────────────────────────
@@ -325,7 +291,10 @@ def process_select_statement(
         # Remove any leading empty lines before the SELECT to avoid
         # emitting multiple blank lines in the generated SAS.
         text_stripped = _strip_leading_blank_lines_before_select(text)
-        token = (f"select_dataset_{dataset_name}", text_stripped)
+        if _is_standalone_select(text_stripped):
+            token = (f"select_dataset_{dataset_name}", text_stripped)
+        else:
+            token = ("statement", text_stripped)
     else:  # comment mode (default)
         warnings.append(
             f"Statement #{stmt_index} is a SELECT and will be commented out "
@@ -371,7 +340,6 @@ def _is_select_statement(text: str) -> bool:
         return True
     if not upper.startswith("WITH"):
         return False
-    # Walk through balanced parentheses of CTEs, then look for SELECT.
     depth = 0
     i = 0
     while i < len(stripped):
@@ -380,10 +348,43 @@ def _is_select_statement(text: str) -> bool:
             depth += 1
         elif ch == ")":
             depth = max(0, depth - 1)
-        elif depth == 0 and upper[i:i+6] == "SELECT":
+        elif depth == 0 and upper.startswith("SELECT", i):
             return True
         i += 1
     return False
+
+
+def _comment_only_prefix(text: str) -> tuple[list[tuple[str, str]], str]:
+    """Split leading full-line SQL comments from a chunk.
+
+    If a chunk starts with one or more '--' comment lines, return those as
+    comment tokens and the remaining SQL text.
+    """
+    tokens: list[tuple[str, str]] = []
+    remaining = text.lstrip()
+    while remaining.startswith("--"):
+        line_end = remaining.find("\n")
+        if line_end == -1:
+            tokens.append(("line_comment", remaining.strip()))
+            return tokens, ""
+        tokens.append(("line_comment", remaining[:line_end].strip()))
+        remaining = remaining[line_end + 1 :].lstrip()
+    return tokens, remaining
+
+
+def _comment_only_statement(text: str) -> bool:
+    """Return True if a chunk is just a single line comment statement."""
+    stripped = text.lstrip()
+    return stripped.startswith("--") and "\n" not in stripped.strip("\n")
+
+
+def _is_plain_select(text: str) -> bool:
+    """Return True for a plain SELECT statement, not a CTE."""
+    stripped = text.lstrip()
+    if not stripped:
+        return False
+    upper = stripped.upper()
+    return upper.startswith("SELECT")
 
 
 def _split_leading_comments_and_statement(text: str) -> list[tuple[str, str]]:
@@ -404,6 +405,18 @@ def _split_leading_comments_and_statement(text: str) -> list[tuple[str, str]]:
     if remaining.strip():
         out.append(('statement', remaining))
     return out
+
+
+def _is_standalone_select(text: str) -> bool:
+    """Return True only for SELECT statements that are not CTEs.
+
+    Used to avoid turning CTEs into datasets while still allowing plain
+    SELECT statements to follow the select_mode setting.
+    """
+    stripped = text.lstrip()
+    if not stripped:
+        return False
+    return stripped.upper().startswith("SELECT")
 
 
 # ── public API ─────────────────────────────────────────────────────────────────
@@ -454,6 +467,9 @@ def translate(
     stmt_index = 0
 
     for kind, text in tokens:
+        if kind == "line_comment" and _comment_only_statement(text):
+            filtered_tokens.append((kind, text))
+            continue
         if kind != "statement":
             filtered_tokens.append((kind, text))
             continue
