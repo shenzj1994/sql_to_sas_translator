@@ -65,10 +65,10 @@
     </div>
     <div class="pane w-full md:w-1/2 flex flex-col min-h-0">
       <div class="pane-label flex items-center justify-between">
-        <span>SAS output</span>
-        <button id="copy-btn" class="copy-btn">copy</button>
+        <span>SAS output</span>        
       </div>
       <textarea id="sas-output" class="form-control output flex-1 min-h-0 h-full resize-none" readonly spellcheck="false" placeholder="Generated SAS will appear here…"></textarea>
+      <button id="copy-btn" class="copy-btn"><b>Click here to Copy</b></button>
     </div>
   </div>
 
@@ -244,7 +244,7 @@
       copyBtn.textContent = 'copied!';
       copyBtn.classList.add('copied');
       setTimeout(() => {
-        copyBtn.textContent = 'copy';
+        copyBtn.textContent = 'Click to Copy';
         copyBtn.classList.remove('copied');
       }, 1500);
     });

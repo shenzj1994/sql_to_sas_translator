@@ -25,15 +25,28 @@ def _convert_inline_line_comments_to_sas(text: str) -> str:
 
     This preserves the statement text while ensuring comment markers are SAS-safe.
     """
-    lines = text.splitlines()
+    lines = text.splitlines(keepends=True)
     converted: list[str] = []
     for line in lines:
-        stripped = line.lstrip()
-        if stripped.startswith("--"):
-            indent_len = len(line) - len(stripped)
-            indent = line[:indent_len]
-            body = stripped[2:].strip()
-            converted.append(f"{indent}/* {body} */" if body else f"{indent}/* */")
+        line_ending = ""
+        if line.endswith("\r\n"):
+            line_body = line[:-2]
+            line_ending = "\r\n"
+        elif line.endswith("\n"):
+            line_body = line[:-1]
+            line_ending = "\n"
         else:
+            line_body = line
+
+        comment_start = line_body.find("--")
+        if comment_start == -1:
             converted.append(line)
-    return "\n".join(converted)
+            continue
+
+        prefix = line_body[:comment_start]
+        body = line_body[comment_start + 2:].strip()
+        converted.append(f"{prefix}/* {body} */" if body else f"{prefix}/* */")
+        if line_ending:
+            converted.append(line_ending)
+
+    return "".join(converted)
