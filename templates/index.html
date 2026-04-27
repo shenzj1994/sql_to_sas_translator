@@ -7,49 +7,67 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml" />
 </head>
 <body>
-<div id="app">
+<div id="app" class="container-fluid p-0">
 
   <!-- header -->
-  <header>
-    <h1>sql <span>→</span> sas passthrough</h1>
-    <div class="spacer"></div>
-    <div class="conn-group">
-      <label for="select-mode">SELECT</label>
-      <select id="select-mode">
-        <option value="comment" selected>as comment</option>
-        <option value="dataset">as dataset</option>
-        <option value="ignore">ignore</option>
-      </select>
-      <label for="conn-name" style="margin-left: 12px;">alias</label>
-      <input id="conn-name" type="text" value="myconn" spellcheck="false" autocomplete="off" placeholder="Connection alias" />
-      <label for="conn-dbtype" style="margin-left: 12px;">dbtype</label>
-      <input id="conn-dbtype" type="text" value="oracle" spellcheck="false" autocomplete="off" placeholder="e.g. oracle" />
-      <label for="conn-dsn" style="margin-left: 12px;">dsn</label>
-      <input id="conn-dsn" type="text" value="" spellcheck="false" autocomplete="off" placeholder="e.g. ABC_DSN" />
-      <label for="conn-authdomain" style="margin-left: 12px;">authdomain</label>
-      <input id="conn-authdomain" type="text" value="" spellcheck="false" autocomplete="off" placeholder="e.g. domain" />
-      <label for="conn-type" style="margin-left: 12px;">conntype</label>
-      <input id="conn-type" type="text" value="global" spellcheck="false" autocomplete="off" placeholder="e.g. global" />
-    </div>
-    <button id="translate-btn">Translate</button>
+  <header class="flex items-center justify-between gap-4 p-4 h-16">
+    <h1 class="text-sm font-mono">sql <span>→</span> sas passthrough</h1>
+    <form class="flex items-center gap-2 conn-group" onsubmit="return false;">
+      <div class="mr-2">
+        <label for="select-mode" class="form-label visually-hidden">How to do with SELECT?</label>
+        <select id="select-mode" class="form-control w-28 md:w-36">
+          <option value="comment" selected>as comment</option>
+          <option value="dataset">as dataset</option>
+          <option value="ignore">ignore</option>
+        </select>
+      </div>
+
+      <div class="mr-2">
+        <label for="conn-name" class="form-label visually-hidden">alias</label>
+        <input id="conn-name" class="form-control w-36 md:w-48" type="text" value="myconn" spellcheck="false" autocomplete="off" placeholder="alias" />
+      </div>
+
+      <div class="mr-2">
+        <label for="conn-dbtype" class="form-label visually-hidden">dbtype</label>
+        <input id="conn-dbtype" class="form-control w-28 md:w-36" type="text" value="oracle" spellcheck="false" autocomplete="off" placeholder="dbtype" />
+      </div>
+
+      <div class="mr-2">
+        <label for="conn-dsn" class="form-label visually-hidden">dsn</label>
+        <input id="conn-dsn" class="form-control w-36 md:w-48" type="text" value="" spellcheck="false" autocomplete="off" placeholder="dsn" />
+      </div>
+
+      <div class="mr-2">
+        <label for="conn-authdomain" class="form-label visually-hidden">authdomain</label>
+        <input id="conn-authdomain" class="form-control w-36 md:w-48" type="text" value="" spellcheck="false" autocomplete="off" placeholder="authdomain" />
+      </div>
+
+      <div class="mr-2">
+        <label for="conn-type" class="form-label visually-hidden">conntype</label>
+        <input id="conn-type" class="form-control w-28 md:w-36" type="text" value="global" spellcheck="false" autocomplete="off" placeholder="conntype" />
+      </div>
+
+      <button id="translate-btn" class="translate-btn bg-blue-600 text-white ml-2">Translate</button>
+    </form>
   </header>
 
   <!-- editors -->
-  <div id="editors">
-    <div class="pane">
-      <div class="pane-label">SQL input</div>
-      <textarea id="sql-input" spellcheck="false" placeholder="Paste your SQL here…"></textarea>
+  <div id="editors" class="flex-1 flex min-h-0">
+    <div class="pane w-full md:w-1/2 flex flex-col min-h-0">
+      <div class="pane-label flex items-center justify-between">SQL input</div>
+      <textarea id="sql-input" class="form-control flex-1 min-h-0 h-full resize-none" spellcheck="false" placeholder="Paste your SQL here…"></textarea>
     </div>
-    <div class="pane">
-      <div class="pane-label">
-        SAS output
-        <button id="copy-btn">copy</button>
+    <div class="pane w-full md:w-1/2 flex flex-col min-h-0">
+      <div class="pane-label flex items-center justify-between">
+        <span>SAS output</span>
+        <button id="copy-btn" class="copy-btn">copy</button>
       </div>
-      <textarea id="sas-output" readonly spellcheck="false" placeholder="Generated SAS will appear here…"></textarea>
+      <textarea id="sas-output" class="form-control output flex-1 min-h-0 h-full resize-none" readonly spellcheck="false" placeholder="Generated SAS will appear here…"></textarea>
     </div>
   </div>
 
@@ -63,6 +81,7 @@
     <div class="stat" id="stat-total">  <span>statements</span><span class="val" id="val-total">—</span></div>
     <div class="stat ok"  id="stat-wrapped"><span>wrapped</span>  <span class="val" id="val-wrapped">—</span></div>
     <div class="stat warn" id="stat-skipped"><span>skipped</span>  <span class="val" id="val-skipped">—</span></div>
+    <div class="stat warn" id="stat-warnings"><span>warnings</span> <span class="val" id="val-warnings">—</span></div>
     <span id="status-msg"></span>
   </div>
 
@@ -108,7 +127,10 @@
     const toggle = document.getElementById('warnings-toggle');
     const list = document.getElementById('warnings-list');
     const toggleIcon = toggle.querySelector('.footer-toggle');
-    
+    // start collapsed
+    list.classList.add('collapsed');
+    toggleIcon.classList.add('collapsed');
+
     toggle.addEventListener('click', () => {
       list.classList.toggle('collapsed');
       toggleIcon.classList.toggle('collapsed');
@@ -138,6 +160,8 @@
     valTotal.textContent   = counts.total;
     valWrapped.textContent = counts.wrapped;
     valSkipped.textContent = counts.skipped;
+    const valWarnings = document.getElementById('val-warnings');
+    if (valWarnings) valWarnings.textContent = warnCount;
     if (counts.skipped > 0) statSkipped.classList.add('warn');
     else statSkipped.classList.remove('warn');
     statusMsg.textContent = warnCount
