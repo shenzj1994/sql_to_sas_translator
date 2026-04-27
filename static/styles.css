@@ -11,6 +11,7 @@
   --ok-text:    #6abf7b;
   --mono:       'JetBrains Mono', monospace;
   --sans:       'IBM Plex Sans', sans-serif;
+  --editor-mono: 'Space Mono', var(--mono);
 }
 
 html, body {
@@ -41,6 +42,11 @@ header { background: var(--surface); border-bottom: 1px solid var(--border); }
 
 /* ensure textareas expand to fill pane */
 textarea.form-control { height: 100%; min-height: 0; }
+
+/* Use Space Mono for SQL input and SAS output editors */
+#sql-input, #sas-output {
+  font-family: var(--editor-mono);
+}
 
 /* footer & status */
 #footer { max-height: 25vh; overflow: auto; }

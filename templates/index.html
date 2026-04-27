@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml" />
@@ -16,10 +17,10 @@
 
   <!-- header -->
   <header class="flex items-center justify-between gap-4 p-4 h-16">
-    <h1 class="text-sm font-mono">sql <span>→</span> sas passthrough</h1>
+    <h1 class="text-sm font-mono">SQL <span>→</span> SAS</h1>
     <form class="flex items-center gap-2 conn-group" onsubmit="return false;">
       <div class="mr-2">
-        <label for="select-mode" class="form-label visually-hidden">How to do with SELECT?</label>
+        <label for="select-mode" class="form-label visually-hidden">How to handle SELECT?</label>
         <select id="select-mode" class="form-control w-28 md:w-36">
           <option value="comment" selected>as comment</option>
           <option value="dataset">as dataset</option>
@@ -34,7 +35,7 @@
 
       <div class="mr-2">
         <label for="conn-dbtype" class="form-label visually-hidden">dbtype</label>
-        <input id="conn-dbtype" class="form-control w-28 md:w-36" type="text" value="oracle" spellcheck="false" autocomplete="off" placeholder="dbtype" />
+        <input id="conn-dbtype" class="form-control w-28 md:w-36" type="text" value="greenplm" spellcheck="false" autocomplete="off" placeholder="dbtype" />
       </div>
 
       <div class="mr-2">
@@ -44,7 +45,7 @@
 
       <div class="mr-2">
         <label for="conn-authdomain" class="form-label visually-hidden">authdomain</label>
-        <input id="conn-authdomain" class="form-control w-36 md:w-48" type="text" value="" spellcheck="false" autocomplete="off" placeholder="authdomain" />
+        <input id="conn-authdomain" class="form-control w-36 md:w-48" type="text" value="DefaultAuth" spellcheck="false" autocomplete="off" placeholder="authdomain" />
       </div>
 
       <div class="mr-2">
