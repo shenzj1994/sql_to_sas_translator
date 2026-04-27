@@ -240,14 +240,50 @@
   copyBtn.addEventListener('click', () => {
     const text = sasOutput.value;
     if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
+
+    // Check if the Clipboard API is available
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        handleSuccess();
+      }).catch(err => {
+        console.error('Failed to copy: ', err);
+      });
+    } else {
+      // Fallback for non-secure contexts
+      fallbackCopyTextToClipboard(text);
+    }
+
+    function handleSuccess() {
       copyBtn.textContent = 'copied!';
       copyBtn.classList.add('copied');
       setTimeout(() => {
         copyBtn.textContent = 'Click to Copy';
         copyBtn.classList.remove('copied');
       }, 1500);
-    });
+    }
+
+    function fallbackCopyTextToClipboard(text) {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      
+      // Ensure the textarea is not visible but part of the DOM
+      textArea.style.position = "fixed";
+      textArea.style.left = "-9999px";
+      textArea.style.top = "0";
+      document.body.appendChild(textArea);
+      
+      textArea.focus();
+      textArea.select();
+
+      try {
+        const successful = document.execCommand('copy');
+        if (successful) handleSuccess();
+      } catch (err) {
+        console.error('Fallback copy failed', err);
+      }
+
+      document.body.removeChild(textArea);
+    }
   });
 </script>
 </body>
