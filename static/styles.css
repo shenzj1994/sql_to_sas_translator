@@ -342,3 +342,53 @@ textarea[readonly] {
 #statusbar .stat.ok  .val { color: var(--ok-text); }
 #statusbar .stat.warn .val { color: var(--warn-text); }
 #statusbar #status-msg { margin-left: auto; }
+
+/* ── responsive adjustments ── */
+@media (max-width: 1000px) {
+  html, body { overflow: auto; }
+
+  header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px;
+    height: auto;
+  }
+
+  header h1 { order: 1; width: 100%; }
+  .spacer { display: none; }
+
+  .conn-group {
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .conn-group input,
+  .conn-group select {
+    width: 140px;
+  }
+
+  #translate-btn { order: 3; margin-left: auto; }
+
+  /* stack editors vertically on narrow screens */
+  #editors { flex-direction: column; }
+  .pane + .pane { border-left: none; border-top: 1px solid var(--border); }
+
+  #statusbar { flex-wrap: wrap; gap: 8px; }
+}
+
+@media (max-width: 600px) {
+  .conn-group input,
+  .conn-group select { width: 100%; }
+
+  .conn-group label { display: none; }
+
+  #translate-btn { width: 100%; }
+
+  .pane-label { font-size: 9px; padding: 6px 8px; }
+
+  textarea { font-size: 13px; padding: 10px; }
+
+  #statusbar { font-size: 10px; padding: 8px; }
+}
