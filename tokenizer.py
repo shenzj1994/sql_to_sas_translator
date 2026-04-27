@@ -32,7 +32,7 @@ def tokenize(sql: str) -> list[tuple[str, str]]:
         # 2. Determine if it's a COMMENT or a STATEMENT
         # sqlparse.Statement.get_type() returns 'SELECT', 'INSERT', etc.
         # If it's just a comment, it usually returns 'UNKNOWN'
-        if stmt.get_type() in ['UNKNOWN','COMMENT']:
+        if stmt.get_type() in ['COMMENT']:
             label = "line_comment"
         else:
             label = "statement"
